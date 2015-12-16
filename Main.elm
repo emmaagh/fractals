@@ -8,8 +8,12 @@ import Debug exposing (..)
 
 {- todo: try buddhabrot method -}
 
+type alias Time = Int
+
+type alias Count = Int
+
 type alias EscapeTimeHistogram = {
-  histogram : List (Int, Int),
+  histogram : List (Time, Count),
   total : Int
 }
 
@@ -24,6 +28,17 @@ type alias Bounds = {
   yMax : Int
 }
 
+type alias Range = {
+  start: Float,
+  range: Float
+}
+
+type alias ColourRange = {
+  red: Range,
+  green: Range,
+  blue: Range
+}
+
 main =
   grid
   |> renderGrid
@@ -35,8 +50,8 @@ mode = Zoomed
 unitSize : Float
 unitSize =
   case mode of
-    WholeView -> 200
-    Zoomed -> 3000
+    WholeView -> 250
+    Zoomed -> 4000
 
 bounds : Bounds
 bounds =
@@ -52,6 +67,42 @@ bounds =
 
 height = bounds.yMax - bounds.yMin
 width = bounds.xMax - bounds.xMin
+
+maxIterations = 500
+
+calculateNextColourInterval previousInterval redRange greenRange blueRange =
+  let red = previousInterval.red
+      green = previousInterval.green
+      blue = previousInterval.blue
+  in
+    { red    = { start = red.start + red.range,     range = redRange },
+      green  = { start = green.start + green.range, range = greenRange },
+      blue   = { start = blue.start + blue.range,   range = blueRange } }
+
+colourInterval1 =
+  { red   = { start = 15.0, range = -8.0 },
+    green = { start = 178.0,  range = 26.0 },
+    blue  = { start = 80.0,  range = 5.0 } }
+
+colourInterval2 =
+  calculateNextColourInterval colourInterval1 151.0 -170.0 255.0
+
+colourInterval3 =
+  calculateNextColourInterval colourInterval2 -55.0 -28.0 -77.0
+
+colourInterval4 =
+  calculateNextColourInterval colourInterval3 152.0 175.0 118.0
+
+{-colourInterval1 =
+  { red   = { start = 35.0, range = 0.0 },
+    green = { start = 80.0,  range = 0.0 },
+    blue  = { start = 170.0,  range = 0.0 } }
+
+colourInterval2 =
+  calculateNextColourInterval colourInterval1 70.0 -45.0 0.0
+
+colourInterval3 =
+  calculateNextColourInterval colourInterval2 105.0 -10.0 -100.0-}
 
 grid : List (Int, Int)
 grid =
@@ -76,8 +127,6 @@ renderGrid coordinates =
           colourEscapeTime time escapeTimeHistogram
           |> renderPixel coords)
 
-maxIterations = 350
-
 scaled : (Int, Int) -> (Float, Float)
 scaled (px, py) =
   let x = (toFloat px) / unitSize
@@ -99,30 +148,26 @@ getEscapeTimeHistogram : List Int -> EscapeTimeHistogram
 getEscapeTimeHistogram escapeTimes =
   let getCount n =
         escapeTimes
-        |> List.filter (\t -> t == n)
+        |> List.filter (\t -> t <= n)
         |> List.length
       histogram =
-        [0..maxIterations]
+        [1..maxIterations]
         |> List.map (\n -> (n, getCount n))
-      total =
-        histogram
-        |> List.map snd
-        |> List.sum
+      total = List.length escapeTimes
   in { histogram = histogram, total = total }
 
 colourEscapeTime : Maybe Int -> EscapeTimeHistogram -> Color
 colourEscapeTime escapeTime escapeTimeHistogram =
   case escapeTime of
     Nothing     -> black
-    Just escape -> let hueTotal =
+    Just escape -> let histogramValue =
                          escapeTimeHistogram.histogram
-                         |> List.filter (\(t, c) -> t <= escape)
+                         |> List.filter (\(t, c) -> t == escape)
                          |> List.map snd
-                         |> List.sum
-                       hue = toFloat hueTotal / toFloat escapeTimeHistogram.total
+                         |> List.sum {- Easiest way to get the one element from the list -}
                    in
-                     let degs = hue * 5
-                     in hsl degs 1 0.5
+                     toFloat histogramValue / toFloat escapeTimeHistogram.total
+                     |> getColourInThirds
 
 renderPixel coords colour =
   let (x, y) = coords
@@ -134,6 +179,28 @@ renderPixel coords colour =
     square (toFloat 1)
     |> filled colour
     |> move (moveX, moveY)
+
+getColourInThirds : Float -> Color
+getColourInThirds value =
+  if (value <= 0.4) then
+    getColour colourInterval1 (value * 2.5)
+  else if (value <= 0.8) then
+    getColour colourInterval2 (value * 2.5 - 1.0)
+  else if (value <= 0.9) then
+    getColour colourInterval3 (value * 10.0 - 8.0)
+  else
+    getColour colourInterval4 (value * 10.0 - 9.0)
+
+getColour : ColourRange -> Float -> Color
+getColour colourIntervals value =
+  let getColour' colourRange =
+        colourRange.start + colourRange.range * value
+        |> round
+      red = getColour' colourIntervals.red
+      green = getColour' colourIntervals.green
+      blue = getColour' colourIntervals.blue
+  in
+    rgb red green blue
 
 fst (x,y) = x
 snd (x,y) = y
