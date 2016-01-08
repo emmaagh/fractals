@@ -3,80 +3,46 @@ import Graphics.Collage exposing (..)
 import Graphics.Element exposing (..)
 import Debug exposing (..)
 
-{- for each c, render c black if z_n+1 = z_n^2 + c, z_0 = 0 is bounded
-                        white otherwise -}
+import Colour exposing (getColourInRanges)
+import Config exposing (unitSize, maxIterations)
+import Grid exposing (..)
 
-{- todo: try buddhabrot method -}
+type alias Time = Int
 
-type alias EscapeTimeHistogram = {
-  histogram : List (Int, Int),
-  total : Int
+type alias Count = Int
+
+type alias EscapeEvent = {
+  time : Int,
+  smooth : Float
 }
 
-type Mode =
-  WholeView
-  | Zoomed
-
-type alias Bounds = {
-  xMin : Int,
-  xMax : Int,
-  yMin : Int,
-  yMax : Int
+type alias EscapeTimeHistogram = {
+  histogram : List (Time, Count),
+  total : Int
 }
 
 main =
   grid
   |> renderGrid
-  |> collage width height
-
-mode : Mode
-mode = Zoomed
-
-unitSize : Float
-unitSize =
-  case mode of
-    WholeView -> 200
-    Zoomed -> 3000
-
-bounds : Bounds
-bounds =
-  case mode of
-    WholeView -> { xMin = -2 * unitSize |> round,
-                   xMax = unitSize |> round,
-                   yMin = -unitSize |> round,
-                   yMax = unitSize |> round }
-    Zoomed -> { xMin = 0.3 * unitSize |> round,
-                xMax = 0.48 * unitSize |> round,
-                yMin = 0.28 * unitSize |> round,
-                yMax = 0.42 * unitSize |> round }
-
-height = bounds.yMax - bounds.yMin
-width = bounds.xMax - bounds.xMin
-
-grid : List (Int, Int)
-grid =
-  [bounds.xMin .. bounds.xMax]
-  |> List.map (\x -> [bounds.yMin .. bounds.yMax] |> List.map ((,) x))
-  |> List.concat
+  |> collage Grid.width Grid.height
 
 renderGrid : List (Int, Int) -> List Form
 renderGrid coordinates =
   let escapeTimes =
         coordinates
         |> List.map (\c ->
-              let escape = c |> scaled |> getEscapeTime
+              let escape = c |> scaled |> getEscapeEvent
               in (c, escape))
       escapeTimeHistogram =
         escapeTimes
         |> List.filterMap snd
+        |> List.map (\e -> e.time)
         |> getEscapeTimeHistogram
   in
     escapeTimes
-    |> List.map (\(coords, time) ->
-          colourEscapeTime time escapeTimeHistogram
+    |> List.map (\(coords, escape) ->
+          colourEscapeEvent escape escapeTimeHistogram
           |> renderPixel coords)
-
-maxIterations = 350
 
 scaled : (Int, Int) -> (Float, Float)
 scaled (px, py) =
@@ -84,13 +50,22 @@ scaled (px, py) =
       y = (toFloat py) / unitSize
   in (x, y)
 
-getEscapeTime : (Float, Float) -> Maybe Int
-getEscapeTime (x0, y0) =
+{- Would be good to use a better smoothing function -}
+smooth : Float -> Float -> Int -> Float
+smooth xn yn n =
+  let logE = logBase e
+      v =
+        (logE (xn*xn + yn*yn)) / (2 * logE 2)
+        |> logE
+  in 1.0 - v
+
+getEscapeEvent : (Float, Float) -> Maybe EscapeEvent
+getEscapeEvent (x0, y0) =
   let escapeTime' xn yn n =
         if (n > maxIterations) then
           Nothing
         else if (xn*xn + yn*yn > 4) then
-          Just n
+          Just { time = n, smooth = smooth xn yn n }
         else
           escapeTime' (xn*xn - yn*yn + x0) (2*xn*yn + y0) (n+1)
   in escapeTime' x0 y0 0
@@ -99,30 +74,29 @@ getEscapeTimeHistogram : List Int -> EscapeTimeHistogram
 getEscapeTimeHistogram escapeTimes =
   let getCount n =
         escapeTimes
-        |> List.filter (\t -> t == n)
+        |> List.filter (\t -> t <= n)
         |> List.length
       histogram =
-        [0..maxIterations]
+        [1..maxIterations]
         |> List.map (\n -> (n, getCount n))
-      total =
-        histogram
-        |> List.map snd
-        |> List.sum
+      total = List.length escapeTimes
   in { histogram = histogram, total = total }
 
-colourEscapeTime : Maybe Int -> EscapeTimeHistogram -> Color
-colourEscapeTime escapeTime escapeTimeHistogram =
-  case escapeTime of
+colourEscapeEvent : Maybe EscapeEvent -> EscapeTimeHistogram -> Color
+colourEscapeEvent escape histogram =
+  case escape of
     Nothing     -> black
-    Just escape -> let hueTotal =
-                         escapeTimeHistogram.histogram
-                         |> List.filter (\(t, c) -> t <= escape)
+    Just escape -> let getHistogramValue time =
+                         histogram.histogram
+                         |> List.filter (\(t, c) -> t == time)
                          |> List.map snd
-                         |> List.sum
-                       hue = toFloat hueTotal / toFloat escapeTimeHistogram.total
-                   in
-                     let degs = hue * 5
-                     in hsl degs 1 0.5
+                         |> List.sum {- Easiest way to get the one element from the list (as List.head returns Maybe) -}
+                         |> toFloat
+                       d =
+                         (1.0 - escape.smooth) * getHistogramValue escape.time
+                         + escape.smooth * getHistogramValue (escape.time + 1)
+                   in d / toFloat histogram.total
+                      |> getColourInRanges
 
 renderPixel coords colour =
   let (x, y) = coords
